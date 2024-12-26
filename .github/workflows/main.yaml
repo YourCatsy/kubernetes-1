@@ -1,0 +1,65 @@
+name: Kubernetes Task
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Create k8s Kind Cluster
+      uses: helm/kind-action@v1
+    - name: Build and start containers for services
+      run: |
+        kubectl apply -f 01-sql-secret.yaml
+        kubectl apply -f 02-mysql.yaml
+        # Wait for MySQL pod to be ready
+        kubectl wait --for=condition=ready pod -l app=mysql --timeout=300s
+        kubectl apply -f task-01-deployment.yaml
+        kubectl apply -f task-02-service.yaml
+        # Wait for WordPress deployment to be available
+        kubectl wait --for=condition=available deployment/wordpress --timeout=300s
+        kubectl wait pods --all --for condition=Ready
+
+    - name: Check resources status
+      run: |
+        kubectl get pods
+        kubectl describe deployment wordpress
+        kubectl describe service wordpress
+
+    - name: Debug Pods and Services
+      run: |
+        echo "=== Debugging Pods ==="
+        kubectl get pods -o wide
+        kubectl describe pods
+        echo "=== Logs for MySQL ==="
+        kubectl logs -l app=mysql || echo "No logs available for MySQL"
+        echo "=== Logs for WordPress ==="
+        kubectl logs -l app=wordpress || echo "No logs available for WordPress"
+        echo "=== Debugging Services ==="
+        kubectl get svc -o wide
+        kubectl describe svc wordpress
+
+    - name: Debug all resources
+      run: |
+        echo "=== All Resources ==="
+        kubectl get all -o wide
+        echo "=== StatefulSet Details ==="
+        kubectl describe statefulset mysql
+
+    - name: Port Forward to webservice
+      run: kubectl port-forward service/wordpress 8080:80 &
+
+    - name: Test containers functionality
+      uses: cypress-io/github-action@v6
+      env:
+        CYPRESS_BASE_URL: http://localhost:8080
+      with:
+        working-directory: ./.github/tests
